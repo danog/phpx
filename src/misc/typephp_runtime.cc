@@ -125,6 +125,11 @@ extern "C" int typephp_runtime_start(typephp_module_getter get_module, int argc,
     }
 
     php_embed_init(argc, argv);
+    // php_request_startup() leaves this flag set until php_execute_script()
+    // clears it; the compiled program runs from the module's RINIT instead,
+    // so clear it here: otherwise every warning is attributed to
+    // "PHP Request Startup" and display_errors suppresses them.
+    PG(during_request_startup) = 0;
 
     typephp_runtime_module = get_module();
     // Declarations of the compiled program are linked while registering the
