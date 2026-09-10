@@ -566,9 +566,13 @@ static inline uint32_t getCallArgNum() {
  * the exception into the native C++ frame so its RAII objects unwind safely.
  */
 static inline void checkCallArgCount(uint32_t required, uint32_t declared, bool variadic) {
+    // Like PHP user functions, compiled functions ignore surplus arguments
+    // (callbacks such as array_any() receive more arguments than declared).
+    (void) declared;
+    (void) variadic;
     const uint32_t given = getCallArgNum();
-    if (UNEXPECTED(given < required || (!variadic && given > declared))) {
-        zend_wrong_parameters_count_error(required, variadic ? UINT32_MAX : declared);
+    if (UNEXPECTED(given < required)) {
+        zend_wrong_parameters_count_error(required, UINT32_MAX);
         throwErrorIfOccurred();
     }
 }
