@@ -16,6 +16,9 @@
 
 #pragma once
 
+#include <cstdlib>
+#include <algorithm>
+
 /**
  * Do not trust any header files of PHP, its internal implementation is very chaotic,
  * which must be wrapped in extern "C" {}
