@@ -1294,3 +1294,14 @@ static inline void typephp_assign_dim(C &&container, const php::Variant &key, co
 
 /** Handler of abstract static methods of compiled classes (throws). */
 ZEND_FUNCTION(typephp_abstract_method);
+
+/**
+ * `[$a, $b] = $value`: PHP silently yields null for the elements of a
+ * non-array value (no "array offset on null" warning, unlike a plain read).
+ */
+static inline php::Variant typephp_list_item(const php::Variant &container, const php::Variant &key) {
+    if (container.isArray() || container.isObject()) {
+        return const_cast<php::Variant &>(container).item(key, false);
+    }
+    return php::Variant();
+}
