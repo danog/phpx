@@ -95,10 +95,20 @@ extern "C" int typephp_runtime_start(typephp_module_getter get_module, int argc,
     // module. Deprecations raised there (e.g. a missing return type on
     // jsonSerialize()) are compile-time notices in plain PHP that an error
     // handler installed by the program never sees; keep them quiet here too.
+    //
+    // The module is registered after php_embed_init() started the request, so
+    // the engine is in request interned-string mode. With OPcache present its
+    // request handler hands out plain refcounted strings for
+    // zend_string_init_interned(), while the generated registration code
+    // stores them as interned (ZVAL_INTERNED_STR, no refcount): the first
+    // release frees a class constant or property name. Declarations of the
+    // program are permanent, so register them with permanent storage.
     {
         int error_reporting = EG(error_reporting);
         EG(error_reporting) = error_reporting & ~E_DEPRECATED;
+        zend_interned_strings_switch_storage(0);
         module_init(typephp_runtime_module);
+        zend_interned_strings_switch_storage(1);
         EG(error_reporting) = error_reporting;
     }
 
