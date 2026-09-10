@@ -1482,6 +1482,7 @@ class Variant {
     Variant item(const Variant &key, bool update = false);
     Reference itemRef(zend_long offset);
     Reference itemRef(const Variant &key);
+    Variant itemSlot(const Variant &key);
     Variant newItem();
     Reference attrRef(const String &name);
     Variant attr(const char *name, AttrMode mode = AttrMode::Get) const;

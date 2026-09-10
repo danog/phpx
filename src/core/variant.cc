@@ -1173,6 +1173,59 @@ Variant Variant::item(const char *key, bool update) {
     return item(String(key), update);
 }
 
+/**
+ * The storage slot of an array element, for `$array[$key] = &$source`.
+ * Unlike item(key, true), a slot that already holds a PHP reference is
+ * returned as an indirect view of the bucket, so that assigning a reference
+ * to it rebinds the element instead of a temporary copy of the old reference.
+ */
+Variant Variant::itemSlot(const Variant &key) {
+    auto zvar = unwrap_ptr();
+    if (zval_is_object(zvar)) {
+        throwError("Cannot assign by reference to an overloaded object");
+        return {};
+    }
+    if (!zval_is_array(zvar)) {
+        if (!zval_is_null(zvar) && !zval_is_undef(zvar)) {
+            throwError("Cannot use a scalar value as an array");
+            return {};
+        }
+        array_init(zvar);
+    } else {
+        SEPARATE_ARRAY(zvar);
+    }
+
+    zend_array *ht = Z_ARRVAL_P(zvar);
+    zval *slot;
+    if (key.isNull()) {
+        slot = zend_hash_next_index_insert(ht, undef());
+    } else if (key.isBool() || key.isInt() || key.isFloat()) {
+        zend_long offset = key.toInt();
+        slot = zend_hash_index_find(ht, offset);
+        if (slot == nullptr) {
+            slot = zend_hash_index_update(ht, offset, undef());
+        }
+    } else {
+        zend_string *string_key;
+        String converted_key;
+        if (EXPECTED(key.isString())) {
+            string_key = Z_STR_P(key.unwrap_ptr());
+        } else {
+            converted_key = key.toString();
+            string_key = converted_key.str();
+        }
+        slot = zend_symtable_find(ht, string_key);
+        if (slot == nullptr) {
+            slot = zend_symtable_update(ht, string_key, undef());
+        }
+    }
+    if (UNEXPECTED(slot == nullptr)) {
+        throwErrorIfOccurred();
+        return {};
+    }
+    return Variant{slot, Ctor::Indirect};
+}
+
 Reference Variant::itemRef(zend_long offset) {
     auto v = item(offset, true);
     if (zval_is_ref(v.const_ptr())) {
