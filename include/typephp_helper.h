@@ -1276,3 +1276,18 @@ static inline php::Int &typephp_static_int_ref(zval *slot) {
 static inline php::Float &typephp_static_float_ref(zval *slot) {
     return Z_DVAL_P(Z_ISREF_P(slot) ? Z_REFVAL_P(slot) : slot);
 }
+
+/**
+ * `$container[$key] = $value` on a dynamically typed container: arrays are
+ * written in place (through an existing reference in the bucket, like Zend's
+ * ASSIGN_DIM), ArrayAccess objects receive offsetSet(), strings an offset
+ * write. A null/undefined container becomes an array.
+ */
+template <typename C>
+static inline void typephp_assign_dim(C &&container, const php::Variant &key, const php::Variant &value) {
+    if (container.isObject() || container.isString()) {
+        container.offsetSet(key, value);
+        return;
+    }
+    container.item(key, true) = value;
+}
