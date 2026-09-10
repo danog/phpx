@@ -102,4 +102,27 @@ template <typename T>
 static inline bool operator!=(T a, const Variant &b) {
     return b != a;
 }
+
+// A Reference is a Variant; comparing it with a native number must not be
+// ambiguous between the Variant member operators and the templates above.
+#define PHPX_REFERENCE_CMP(op, ret)                                              \
+    static inline ret operator op(const Reference &a, zend_long b) {           \
+        return static_cast<const Variant &>(a) op b;                           \
+    }                                                                          \
+    static inline ret operator op(const Reference &a, double b) {              \
+        return static_cast<const Variant &>(a) op b;                           \
+    }                                                                          \
+    static inline ret operator op(zend_long a, const Reference &b) {           \
+        return Variant(a) op static_cast<const Variant &>(b);                  \
+    }                                                                          \
+    static inline ret operator op(double a, const Reference &b) {              \
+        return Variant(a) op static_cast<const Variant &>(b);                  \
+    }
+PHPX_REFERENCE_CMP(<, bool)
+PHPX_REFERENCE_CMP(>, bool)
+PHPX_REFERENCE_CMP(<=, bool)
+PHPX_REFERENCE_CMP(>=, bool)
+PHPX_REFERENCE_CMP(==, bool)
+PHPX_REFERENCE_CMP(!=, bool)
+#undef PHPX_REFERENCE_CMP
 }  // namespace php

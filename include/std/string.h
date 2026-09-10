@@ -68,6 +68,13 @@ String implode(const String &glue, const Array &pieces);
 inline String join(const String &glue, const Array &pieces) {
     return implode(glue, pieces);
 }
+// implode(array $pieces): string (single-argument form)
+inline String implode(const Array &pieces) {
+    return implode(String(""), pieces);
+}
+inline String join(const Array &pieces) {
+    return implode(String(""), pieces);
+}
 
 // ========================
 // strpos / stripos / strrpos / strripos
