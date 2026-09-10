@@ -218,7 +218,11 @@ php::Variant php::MethodCallCacheSlot::callImpl(
     }
 
     zend_fcall_info_cache resolved = resolveCallable(method, zend_object);
-    if (EXPECTED(!(resolved.function_handler->common.fn_flags & NON_CACHEABLE_CALL_FLAGS))) {
+    // A get_method handler may redirect the call to another object (SPL
+    // iterators forward to their inner iterator): such a resolution is
+    // specific to the receiver's current state and must not be cached.
+    if (EXPECTED(!(resolved.function_handler->common.fn_flags & NON_CACHEABLE_CALL_FLAGS))
+        && resolved.object == zend_object) {
         class_entry_ = zend_object->ce;
         name_ = zend_string_copy(name);
         function_ = resolved.function_handler;
@@ -269,7 +273,8 @@ php::Variant php::MethodCallCacheSlot::callScopedImpl(const Variant &object,
     }
 
     zend_fcall_info_cache resolved = resolveCallable(method, target_object, &scope);
-    if (EXPECTED(!(resolved.function_handler->common.fn_flags & NON_CACHEABLE_CALL_FLAGS))) {
+    if (EXPECTED(!(resolved.function_handler->common.fn_flags & NON_CACHEABLE_CALL_FLAGS))
+        && resolved.object == target_object) {
         class_entry_ = target_object->ce;
         name_ = zend_string_copy(name);
         function_ = resolved.function_handler;
