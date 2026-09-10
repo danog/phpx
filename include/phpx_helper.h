@@ -376,6 +376,112 @@ static inline String toStringArgExact(const Variant &v,
     return String(Z_STR_P(zv));
 }
 
+/**
+ * Coercive (non strict_types) scalar conversions: PHP's weak scalar rules
+ * (int/float/bool/numeric string/Stringable interplay) applied in place.
+ */
+static inline bool coerceScalarArg(Variant &v, uint32_t type_mask) {
+    zval *zv = v.unwrap_ptr();
+    switch (Z_TYPE_P(zv)) {
+    case IS_LONG:
+    case IS_DOUBLE:
+    case IS_STRING:
+    case IS_TRUE:
+    case IS_FALSE:
+    case IS_OBJECT:
+        return zend_verify_scalar_type_hint(type_mask, zv, false, false);
+    default:
+        return false;
+    }
+}
+
+template <typename T, std::enable_if_t<std::is_same_v<T, Int>, int> = 0>
+static inline Int toIntArgCoerce(T v, const String &, zend_long, const String &) {
+    return v;
+}
+
+template <typename T, std::enable_if_t<std::is_same_v<T, Float>, int> = 0>
+static inline Float toFloatArgCoerce(T v, const String &, zend_long, const String &) {
+    return v;
+}
+
+template <typename T, std::enable_if_t<std::is_same_v<T, Bool>, int> = 0>
+static inline Bool toBoolArgCoerce(T v, const String &, zend_long, const String &) {
+    return v;
+}
+
+template <typename T, std::enable_if_t<std::is_same_v<T, String>, int> = 0>
+static inline String toStringArgCoerce(T v, const String &, zend_long, const String &) {
+    return v;
+}
+
+static inline Int toIntArgCoerce(const Variant &v,
+                                 const String &callable_name,
+                                 zend_long argument_number,
+                                 const String &parameter_name) {
+    const zval *zv = v.unwrap_ptr();
+    if (EXPECTED(Z_TYPE_P(zv) == IS_LONG)) {
+        return Z_LVAL_P(zv);
+    }
+    Variant tmp = v;
+    if (UNEXPECTED(!coerceScalarArg(tmp, MAY_BE_LONG))) {
+        throwArgumentTypeError(v, callable_name, argument_number, parameter_name, String("int"));
+        return 0;
+    }
+    return Z_LVAL_P(tmp.unwrap_ptr());
+}
+
+static inline Float toFloatArgCoerce(const Variant &v,
+                                     const String &callable_name,
+                                     zend_long argument_number,
+                                     const String &parameter_name) {
+    const zval *zv = v.unwrap_ptr();
+    if (Z_TYPE_P(zv) == IS_DOUBLE) {
+        return Z_DVAL_P(zv);
+    }
+    if (Z_TYPE_P(zv) == IS_LONG) {
+        return static_cast<Float>(Z_LVAL_P(zv));
+    }
+    Variant tmp = v;
+    if (UNEXPECTED(!coerceScalarArg(tmp, MAY_BE_DOUBLE))) {
+        throwArgumentTypeError(v, callable_name, argument_number, parameter_name, String("float"));
+        return 0;
+    }
+    return Z_DVAL_P(tmp.unwrap_ptr());
+}
+
+static inline Bool toBoolArgCoerce(const Variant &v,
+                                   const String &callable_name,
+                                   zend_long argument_number,
+                                   const String &parameter_name) {
+    const zval *zv = v.unwrap_ptr();
+    if (Z_TYPE_P(zv) == IS_TRUE || Z_TYPE_P(zv) == IS_FALSE) {
+        return Z_TYPE_P(zv) == IS_TRUE;
+    }
+    Variant tmp = v;
+    if (UNEXPECTED(!coerceScalarArg(tmp, MAY_BE_BOOL))) {
+        throwArgumentTypeError(v, callable_name, argument_number, parameter_name, String("bool"));
+        return false;
+    }
+    return Z_TYPE_P(tmp.unwrap_ptr()) == IS_TRUE;
+}
+
+static inline String toStringArgCoerce(const Variant &v,
+                                       const String &callable_name,
+                                       zend_long argument_number,
+                                       const String &parameter_name) {
+    const zval *zv = v.unwrap_ptr();
+    if (EXPECTED(Z_TYPE_P(zv) == IS_STRING)) {
+        return String(Z_STR_P(zv));
+    }
+    Variant tmp = v;
+    if (UNEXPECTED(!coerceScalarArg(tmp, MAY_BE_STRING))) {
+        throwArgumentTypeError(v, callable_name, argument_number, parameter_name, String("string"));
+        return {};
+    }
+    return String(Z_STR_P(tmp.unwrap_ptr()));
+}
+
 static inline Array toArrayExact(const Variant &v, const char *property = nullptr) {
     const zval *zv = v.unwrap_ptr();
     if (UNEXPECTED(Z_TYPE_P(zv) != IS_ARRAY)) {
