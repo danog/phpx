@@ -395,6 +395,17 @@ static inline bool coerceScalarArg(Variant &v, uint32_t type_mask) {
     }
 }
 
+/**
+ * Weak-mode argument for an internal function: scalars/Stringables convert
+ * to the declared scalar type; anything else is passed unchanged (the callee
+ * reports the TypeError).
+ */
+static inline Variant coerceArgWeak(const Variant &v, uint32_t type_mask) {
+    Variant tmp = v;
+    coerceScalarArg(tmp, type_mask);
+    return tmp;
+}
+
 template <typename T, std::enable_if_t<std::is_same_v<T, Int>, int> = 0>
 static inline Int toIntArgCoerce(T v, const String &, zend_long, const String &) {
     return v;
