@@ -2776,6 +2776,23 @@ class Reference : public Variant {
     Reference &operator=(Reference &&v);
     Reference &operator=(Reference *);
     Reference &operator=(const Variant &v);
+    // A zero literal (`ref = 0LL`) is a null pointer constant and would select
+    // operator=(Reference *); scalar values must assign through the reference.
+    Reference &operator=(zend_long v) {
+        return *this = Variant(v);
+    }
+    Reference &operator=(int v) {
+        return *this = Variant(static_cast<zend_long>(v));
+    }
+    Reference &operator=(double v) {
+        return *this = Variant(v);
+    }
+    Reference &operator=(bool v) {
+        return *this = Variant(v);
+    }
+    Reference &operator=(const char *v) {
+        return *this = Variant(v);
+    }
 };
 
 /**
