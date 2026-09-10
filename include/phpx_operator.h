@@ -125,4 +125,22 @@ PHPX_REFERENCE_CMP(>=, bool)
 PHPX_REFERENCE_CMP(==, bool)
 PHPX_REFERENCE_CMP(!=, bool)
 #undef PHPX_REFERENCE_CMP
+#define PHPX_REFERENCE_ARITH(op)                                                 \
+    static inline Variant operator op(const Reference &a, zend_long b) {        \
+        return static_cast<const Variant &>(a) op b;                            \
+    }                                                                           \
+    static inline Variant operator op(const Reference &a, double b) {           \
+        return static_cast<const Variant &>(a) op b;                            \
+    }                                                                           \
+    static inline Variant operator op(zend_long a, const Reference &b) {        \
+        return Variant(a) op static_cast<const Variant &>(b);                   \
+    }                                                                           \
+    static inline Variant operator op(double a, const Reference &b) {           \
+        return Variant(a) op static_cast<const Variant &>(b);                   \
+    }
+PHPX_REFERENCE_ARITH(+)
+PHPX_REFERENCE_ARITH(-)
+PHPX_REFERENCE_ARITH(*)
+PHPX_REFERENCE_ARITH(/)
+#undef PHPX_REFERENCE_ARITH
 }  // namespace php
