@@ -1398,34 +1398,31 @@ Reference &Reference::operator=(Reference *v) {
 
 Reference &Reference::operator=(const Variant &v) {
     if (&v != this) {
-        if (v.isReference()) {
-            // Two wrappers may already point at the same zend_reference (for
-            // example, a typed by-reference variadic element normalized from
-            // int to float). Destroying the destination value before copying
-            // that same reference would turn the shared value into UNDEF.
-            if (isReference() && Z_REF_P(ptr()) == Z_REF_P(v.direct_ptr())) {
-                return *this;
-            }
+        // PHP assignment stores the value: a source variable that happens to
+        // be a PHP reference (`$x = &$y; $ref = $x;`) is dereferenced, never
+        // rebound. Rebinding is explicit (operator=(Reference *) /
+        // rebindReference()).
+        if (v.isReference() && isReference() && Z_REF_P(ptr()) == Z_REF_P(v.direct_ptr())) {
+            // the same zend_reference on both sides: nothing to do
+            return *this;
+        }
+        const zval *source = v.unwrap_ptr();
+        // An unset reference degenerates to a normal variable on reassignment.
+        if (UNEXPECTED(!isReference())) {
             destroy();
-            copyRef(v.direct_ptr());
-        } else {
-            // An unset reference degenerates to a normal variable on reassignment.
-            if (UNEXPECTED(!isReference())) {
-                destroy();
-                zval_copy(ptr(), v.direct_ptr());
-            } else if (UNEXPECTED(ZEND_REF_HAS_TYPE_SOURCES(Z_REF_P(ptr())))) {
-                zval value;
-                zval_copy(&value, v.direct_ptr());
-                if (UNEXPECTED(zend_try_assign_typed_ref(Z_REF_P(ptr()), &value) == FAILURE)) {
-                    throwErrorIfOccurred();
-                }
-            } else {
-                zval *target = refval();
-                zval old = *target;
-                zval_copy(target, v.direct_ptr());
-                zval_ptr_dtor(&old);
+            zval_copy(ptr(), source);
+        } else if (UNEXPECTED(ZEND_REF_HAS_TYPE_SOURCES(Z_REF_P(ptr())))) {
+            zval value;
+            zval_copy(&value, source);
+            if (UNEXPECTED(zend_try_assign_typed_ref(Z_REF_P(ptr()), &value) == FAILURE)) {
                 throwErrorIfOccurred();
             }
+        } else {
+            zval *target = refval();
+            zval old = *target;
+            zval_copy(target, source);
+            zval_ptr_dtor(&old);
+            throwErrorIfOccurred();
         }
     }
     return *this;
