@@ -1201,6 +1201,13 @@ PHPX_API php::Variant typephp_read_property_scoped(const php::Variant &object,
  * Read a statically named property through its normal object handler while
  * supplying one request-local cache entry dedicated to this read site.
  */
+/** Named property read with the call site's class scope and a per-site cache. */
+PHPX_API php::Variant typephp_read_property_scoped_cached(const php::Variant &object,
+                                                          const php::String &member,
+                                                          zend_class_entry *scope,
+                                                          php::AttrMode mode,
+                                                          php::PropertyCacheSlot &cache);
+
 PHPX_API php::Variant typephp_read_property_cached(const php::Variant &object,
                                                    const php::String &member,
                                                    php::AttrMode mode,

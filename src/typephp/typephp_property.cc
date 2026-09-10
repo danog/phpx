@@ -634,6 +634,47 @@ php::Variant typephp_read_property_cached(const php::Variant &object,
     return php::Variant{member_p, php::zval_wrap(member_p)};
 }
 
+php::Variant typephp_read_property_scoped_cached(const php::Variant &object,
+                                                 const php::String &member,
+                                                 zend_class_entry *scope,
+                                                 php::AttrMode mode,
+                                                 php::PropertyCacheSlot &cache) {
+    if (UNEXPECTED(!object.isObject())) {
+        php::throwError("Attempt to read property `%s` on %s", member.toCString(), object.typeStr());
+        return {};
+    }
+
+    zval rv;
+    zval *member_p;
+    {
+        // The call site belongs to one class: its scope is constant, so the
+        // Zend property cache slot (validated against the runtime CE) stays
+        // valid across calls.
+        php::FakeScopeGuard fake_scope_guard{scope};
+        member_p = object.object()->handlers->read_property(
+            object.object(),
+            member.str(),
+            mode == php::AttrMode::Update ? BP_VAR_RW : (mode == php::AttrMode::Isset ? BP_VAR_IS : BP_VAR_R),
+            cache.data(),
+            &rv);
+        php::throwErrorIfOccurred();
+
+        if (php::zval_is_null(member_p) && mode == php::AttrMode::Update) {
+            member_p = object.object()->handlers->write_property(
+                object.object(), member.str(), php::undef(), cache.data());
+            php::throwErrorIfOccurred();
+            if (member_p == php::undef()) {
+                php::throwError("Dynamic property `%s` assignment is not supported", member.toCString());
+            }
+        }
+    }
+
+    if (member_p == &rv) {
+        return php::Variant{member_p, php::Ctor::Move};
+    }
+    return php::Variant{member_p, php::zval_wrap(member_p)};
+}
+
 void typephp_write_property_scoped(const php::Variant &object,
                                    const php::Variant &member,
                                    const php::Variant &value,
