@@ -1071,8 +1071,8 @@ Variant Variant::item(zend_long offset, bool update) {
             array_init(zvar);
             retval = zend_hash_index_update(Z_ARRVAL_P(zvar), offset, undef());
         } else {
-            throwError(
-                "Only array/object/string support the item(" ZEND_LONG_FMT ") method, got `%s`", offset, typeStr());
+            // PHP: reading an offset of null/bool/int/float yields null with a warning
+            zend_error(E_WARNING, "Trying to access array offset on %s", zend_zval_value_name(zvar));
             return Variant{undef()};
         }
     }
@@ -1141,7 +1141,8 @@ Variant Variant::item(const Variant &key, bool update) {
                 retval = zend_hash_update(Z_ARRVAL_P(zvar), skey.str(), undef());
             }
         } else {
-            throwError("Only array/object/string support the item() method, type `%s` given", typeStr());
+            // PHP: reading an offset of null/bool/int/float yields null with a warning
+            zend_error(E_WARNING, "Trying to access array offset on %s", zend_zval_value_name(zvar));
             return Variant{undef()};
         }
     }
