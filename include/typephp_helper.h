@@ -1296,6 +1296,17 @@ static inline void typephp_assign_dim(C &&container, const php::Variant &key, co
 ZEND_FUNCTION(typephp_abstract_method);
 
 /**
+ * typephp_set_server_argv(array $argv): void
+ * Replaces $_SERVER['argv']/['argc'] and the global $argv/$argc, so that
+ * getopt() and argv-based code see the arguments a compiled main() decided
+ * on (e.g. after stripping a launcher script path).
+ */
+ZEND_FUNCTION(typephp_set_server_argv);
+ZEND_BEGIN_ARG_INFO_EX(arginfo_typephp_set_server_argv, 0, 0, 1)
+    ZEND_ARG_TYPE_INFO(0, argv, IS_ARRAY, 0)
+ZEND_END_ARG_INFO()
+
+/**
  * `[$a, $b] = $value`: PHP silently yields null for the elements of a
  * non-array value (no "array offset on null" warning, unlike a plain read).
  */

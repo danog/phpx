@@ -81,6 +81,42 @@ ZEND_FUNCTION(typephp_abstract_method) {
                      ZSTR_VAL(EX(func)->common.scope->name), ZSTR_VAL(EX(func)->common.function_name));
 }
 
+static void typephp_update_argv_entries(zval *server, zval *argv_zv, zend_long argc) {
+    if (Z_TYPE_P(server) != IS_ARRAY) {
+        return;
+    }
+    SEPARATE_ARRAY(server);
+    zval argc_zv;
+    ZVAL_LONG(&argc_zv, argc);
+    Z_TRY_ADDREF_P(argv_zv);
+    zend_hash_str_update(Z_ARRVAL_P(server), "argv", sizeof("argv") - 1, argv_zv);
+    zend_hash_str_update(Z_ARRVAL_P(server), "argc", sizeof("argc") - 1, &argc_zv);
+}
+
+ZEND_FUNCTION(typephp_set_server_argv) {
+    zval *argv_zv;
+    ZEND_PARSE_PARAMETERS_START(1, 1)
+        Z_PARAM_ARRAY(argv_zv)
+    ZEND_PARSE_PARAMETERS_END();
+    zend_long argc = zend_hash_num_elements(Z_ARRVAL_P(argv_zv));
+
+    zval *server = &PG(http_globals)[TRACK_VARS_SERVER];
+    typephp_update_argv_entries(server, argv_zv, argc);
+    // $_SERVER may already be a separated copy in the symbol table
+    zval *symbol = zend_hash_str_find(&EG(symbol_table), "_SERVER", sizeof("_SERVER") - 1);
+    if (symbol != nullptr) {
+        ZVAL_DEREF(symbol);
+        if (Z_TYPE_P(symbol) == IS_ARRAY && Z_ARRVAL_P(symbol) != Z_ARRVAL_P(server)) {
+            typephp_update_argv_entries(symbol, argv_zv, argc);
+        }
+    }
+    zval argc_zv;
+    ZVAL_LONG(&argc_zv, argc);
+    Z_TRY_ADDREF_P(argv_zv);
+    zend_hash_str_update(&EG(symbol_table), "argv", sizeof("argv") - 1, argv_zv);
+    zend_hash_str_update(&EG(symbol_table), "argc", sizeof("argc") - 1, &argc_zv);
+}
+
 static bool typephp_runtime_started = false;
 
 extern "C" int typephp_runtime_start(typephp_module_getter get_module, int argc, char **argv) {
