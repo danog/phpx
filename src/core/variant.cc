@@ -1215,6 +1215,31 @@ Reference Variant::attrRef(const String &prop_name) {
     return ref;
 }
 
+Variant Variant::readUninitializedSlot(zend_object *obj, zval *slot) const {
+    zend_property_info *info = zend_get_property_info_for_slot(obj, slot);
+    if (info == nullptr) {
+        return Variant{slot, zval_wrap(slot)};
+    }
+    // private/protected names are mangled in the property info
+    const char *class_name = nullptr;
+    const char *prop_name = nullptr;
+    size_t prop_len = 0;
+    zend_unmangle_property_name_ex(info->name, &class_name, &prop_name, &prop_len);
+    zend_string *name = zend_string_init(prop_name, prop_len, 0);
+    zval rv;
+    zval *member_p;
+    do {
+        FakeScopeGuard fake_scope_guard{info->ce};
+        member_p = obj->handlers->read_property(obj, name, BP_VAR_R, nullptr, &rv);
+    } while (0);
+    zend_string_release(name);
+    throwErrorIfOccurred();
+    if (member_p == &rv) {
+        return Variant{member_p, Ctor::Move};
+    }
+    return Variant{member_p, zval_wrap(member_p)};
+}
+
 Variant Variant::attr(const String &name, AttrMode mode) const {
     if (UNEXPECTED(!isObject())) {
         throwError("Attempt to read property `%s` on %s", name.toCString(), typeStr());

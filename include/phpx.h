@@ -1488,9 +1488,19 @@ class Variant {
     Variant attr(const String &name, AttrMode mode = AttrMode::Get) const;
     Variant attr(const Variant &name, AttrMode mode = AttrMode::Get) const;
     Variant attr(uintptr_t offset, AttrMode mode = AttrMode::Get) const {
-        auto member_p = OBJ_PROP(checkedObject("Attempt to read property"), offset);
+        zend_object *obj = checkedObject("Attempt to read property");
+        auto member_p = OBJ_PROP(obj, offset);
+        if (UNEXPECTED(Z_TYPE_P(member_p) == IS_UNDEF) && mode == AttrMode::Get) {
+            return readUninitializedSlot(obj, member_p);
+        }
         return Variant{member_p, zval_wrap(member_p)};
     }
+    /**
+     * A declared property slot without a value: an uninitialized typed
+     * property (Error in PHP), an unset() property (__get() or a warning).
+     * The read_property handler of the declaring class decides.
+     */
+    Variant readUninitializedSlot(zend_object *obj, zval *slot) const;
     /**
      * call object methods
      */
