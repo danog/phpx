@@ -72,6 +72,15 @@ static void module_shutdown(zend_module_entry *module) {
 }
 
 static zend_module_entry *typephp_runtime_module = nullptr;
+/**
+ * Handler of an abstract static method of a compiled class: Zend does not
+ * allow ZEND_ACC_ABSTRACT on static methods of internal classes.
+ */
+ZEND_FUNCTION(typephp_abstract_method) {
+    zend_throw_error(nullptr, "Cannot call abstract method %s::%s()",
+                     ZSTR_VAL(EX(func)->common.scope->name), ZSTR_VAL(EX(func)->common.function_name));
+}
+
 static bool typephp_runtime_started = false;
 
 extern "C" int typephp_runtime_start(typephp_module_getter get_module, int argc, char **argv) {
@@ -82,7 +91,16 @@ extern "C" int typephp_runtime_start(typephp_module_getter get_module, int argc,
     php_embed_init(argc, argv);
 
     typephp_runtime_module = get_module();
-    module_init(typephp_runtime_module);
+    // Declarations of the compiled program are linked while registering the
+    // module. Deprecations raised there (e.g. a missing return type on
+    // jsonSerialize()) are compile-time notices in plain PHP that an error
+    // handler installed by the program never sees; keep them quiet here too.
+    {
+        int error_reporting = EG(error_reporting);
+        EG(error_reporting) = error_reporting & ~E_DEPRECATED;
+        module_init(typephp_runtime_module);
+        EG(error_reporting) = error_reporting;
+    }
 
 #if !defined(PHP_WIN32) && !defined(__wasi__) && !defined(PHPX_IOS) && !defined(PHPX_ANDROID)
     save_ps_args(argc, argv);

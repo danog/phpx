@@ -1291,3 +1291,6 @@ static inline void typephp_assign_dim(C &&container, const php::Variant &key, co
     }
     container.item(key, true) = value;
 }
+
+/** Handler of abstract static methods of compiled classes (throws). */
+ZEND_FUNCTION(typephp_abstract_method);

@@ -55,7 +55,8 @@ Variant hash(const String &algo, const String &data, bool raw_output) {
 
     auto *digest = static_cast<unsigned char *>(emalloc(ops->digest_size));
     ops->hash_final(digest, context);
-#if PHP_VERSION_ID >= 80600
+#if PHP_VERSION_ID >= 80500
+    // PHP 8.5 aligns the context inside a larger allocation
     php_hash_free_context(ops, context);
 #else
     efree(context);
