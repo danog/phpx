@@ -59,6 +59,9 @@ void typephp_unregister_fiber_generator_class() {}
 
 #include <limits>
 #include <unordered_map>
+#include <unistd.h>
+#include <cstdio>
+#include <cstdlib>
 #include <unordered_set>
 
 extern "C" {
@@ -81,6 +84,18 @@ uint32_t typephp_fiber_generator_registration_count = 0;
 std::unordered_map<zend_fiber *, zend_fiber *> typephp_generator_fibers;
 
 const char *const typephp_fiber_foreign_key = "__typephp_foreign";
+
+/** zend_fiber::flags bit marking a fiber that runs a TypePHP generator body */
+constexpr uint8_t typephp_fiber_flag_generator = 1 << 6;
+
+void typephp_register_generator_fiber(zend_fiber *fiber) {
+    fiber->flags |= typephp_fiber_flag_generator;
+    typephp_generator_fibers[fiber] = EG(active_fiber);
+}
+
+bool typephp_is_generator_fiber(const zend_fiber *fiber) {
+    return fiber != nullptr && (fiber->flags & typephp_fiber_flag_generator) != 0;
+}
 }
 
 static const php::Str &typephp_fiber_str_callback() {
@@ -264,16 +279,26 @@ static bool typephp_fiber_is_foreign_payload(const php::Var &value) {
     return value.isArray() && php::Array(value).exists(typephp_fiber_foreign_key);
 }
 
+static bool typephp_fiber_debug() {
+    static int enabled = -1;
+    if (enabled < 0) {
+        enabled = getenv("TYPEPHP_FIBER_DEBUG") != nullptr ? 1 : 0;
+    }
+    return enabled == 1;
+}
+
 zend_fiber *typephp_logical_fiber_current() {
     zend_fiber *fiber = EG(active_fiber);
-    while (fiber != nullptr) {
+    zend_fiber *active = fiber;
+    while (typephp_is_generator_fiber(fiber)) {
         auto it = typephp_generator_fibers.find(fiber);
-        if (it == typephp_generator_fibers.end()) {
-            return fiber;
-        }
-        fiber = it->second;
+        fiber = it == typephp_generator_fibers.end() ? nullptr : it->second;
     }
-    return nullptr;
+    if (typephp_fiber_debug()) {
+        fprintf(stderr, "[fiber %d] getCurrent: active=%p generator=%d -> logical=%p\n", getpid(), (void *) active,
+                typephp_is_generator_fiber(active) ? 1 : 0, (void *) fiber);
+    }
+    return fiber;
 }
 
 php::Var typephp_logical_fiber_current_object() {
@@ -286,9 +311,35 @@ php::Var typephp_logical_fiber_current_object() {
     return php::Var(&object, php::Ctor::Move);
 }
 
+/** Fiber::suspend($value) exactly as the engine implements it (bailout, throw(), destroyed fibers). */
+static php::Var typephp_fiber_call_suspend(const php::Var &value) {
+    zend_function *suspend =
+        static_cast<zend_function *>(zend_hash_str_find_ptr(&zend_ce_fiber->function_table, ZEND_STRL("suspend")));
+    ZEND_ASSERT(suspend != nullptr);
+    zval arg;
+    ZVAL_COPY(&arg, value.const_ptr());
+    zval retval;
+    ZVAL_UNDEF(&retval);
+    zend_call_known_function(suspend, nullptr, zend_ce_fiber, &retval, 1, &arg, nullptr);
+    zval_ptr_dtor(&arg);
+    if (EG(exception) != nullptr) {
+        zval_ptr_dtor(&retval);
+        php::throwErrorIfOccurred();
+        return php::null;
+    }
+    if (Z_TYPE(retval) == IS_UNDEF) {
+        return php::null;
+    }
+    return php::Var(&retval, php::Ctor::Move);
+}
+
 php::Var typephp_logical_fiber_suspend(const php::Var &value) {
     zend_fiber *fiber = EG(active_fiber);
-    if (fiber != nullptr && typephp_generator_fibers.count(fiber) != 0) {
+    if (typephp_fiber_debug()) {
+        fprintf(stderr, "[fiber %d] suspend: active=%p generator=%d\n", getpid(), (void *) fiber,
+                typephp_is_generator_fiber(fiber) ? 1 : 0);
+    }
+    if (typephp_is_generator_fiber(fiber)) {
         // Inside a generator body: hand the suspension to the generator
         // driver, which suspends the consumer's fiber with the same value
         // and resumes the generator with whatever the consumer is resumed
@@ -302,8 +353,7 @@ php::Var typephp_logical_fiber_suspend(const php::Var &value) {
         }
         return resumed;
     }
-    bool closed = false;
-    return typephp_fiber_suspend(value, &closed);
+    return typephp_fiber_call_suspend(value);
 }
 
 void typephp_fiber_rethrow(const php::Var &exception) {
@@ -452,6 +502,23 @@ static bool typephp_fiber_generator_is_closed(TypephpFiberGeneratorState state) 
     return state == TYPEPHP_FIBER_GENERATOR_CLOSED_RETURNED || state == TYPEPHP_FIBER_GENERATOR_CLOSED_FAILED;
 }
 
+/**
+ * A generator abandoned while suspended releases its fiber here: drop it from
+ * the generator registry before the fiber's memory can be reused.
+ */
+static void typephp_fiber_generator_free_obj(zend_object *object) {
+    auto *info = static_cast<zend_property_info *>(
+        zend_hash_str_find_ptr(&object->ce->properties_info, ZEND_STRL("fiber")));
+    if (info != nullptr) {
+        zval *fiber = OBJ_PROP(object, info->offset);
+        ZVAL_DEREF(fiber);
+        if (Z_TYPE_P(fiber) == IS_OBJECT) {
+            typephp_generator_fibers.erase(reinterpret_cast<zend_fiber *>(Z_OBJ_P(fiber)));
+        }
+    }
+    zend_object_std_dtor(object);
+}
+
 static void typephp_fiber_generator_close(php::Object &this_, bool returned) {
     php::Var return_value;
     {
@@ -522,22 +589,22 @@ static void typephp_fiber_generator_advance(php::Object &this_,
                 php::newObject(typephp_fiber_str_fiber_class(), {this_.get(typephp_fiber_str_callback())});
             this_.set(typephp_fiber_str_fiber(), fiber);
             this_.set(typephp_fiber_str_state(), static_cast<zend_long>(TYPEPHP_FIBER_GENERATOR_RUNNING));
-            typephp_generator_fibers[reinterpret_cast<zend_fiber *>(fiber.object())] = EG(active_fiber);
+            typephp_register_generator_fiber(reinterpret_cast<zend_fiber *>(fiber.object()));
             result = fiber.call(typephp_fiber_str_start());
         } else if (throw_value != nullptr) {
             php::Object fiber = this_.get(typephp_fiber_str_fiber());
             this_.set(typephp_fiber_str_state(), static_cast<zend_long>(TYPEPHP_FIBER_GENERATOR_RUNNING));
-            typephp_generator_fibers[reinterpret_cast<zend_fiber *>(fiber.object())] = EG(active_fiber);
+            typephp_register_generator_fiber(reinterpret_cast<zend_fiber *>(fiber.object()));
             result = fiber.call(typephp_fiber_str_throw(), php::ArgList{*throw_value});
         } else if (send_value != nullptr) {
             php::Object fiber = this_.get(typephp_fiber_str_fiber());
             this_.set(typephp_fiber_str_state(), static_cast<zend_long>(TYPEPHP_FIBER_GENERATOR_RUNNING));
-            typephp_generator_fibers[reinterpret_cast<zend_fiber *>(fiber.object())] = EG(active_fiber);
+            typephp_register_generator_fiber(reinterpret_cast<zend_fiber *>(fiber.object()));
             result = fiber.call(typephp_fiber_str_resume(), php::ArgList{*send_value});
         } else {
             php::Object fiber = this_.get(typephp_fiber_str_fiber());
             this_.set(typephp_fiber_str_state(), static_cast<zend_long>(TYPEPHP_FIBER_GENERATOR_RUNNING));
-            typephp_generator_fibers[reinterpret_cast<zend_fiber *>(fiber.object())] = EG(active_fiber);
+            typephp_register_generator_fiber(reinterpret_cast<zend_fiber *>(fiber.object()));
             result = fiber.call(typephp_fiber_str_resume());
         }
 
@@ -550,6 +617,10 @@ static void typephp_fiber_generator_advance(php::Object &this_,
                 break;
             }
             php::Var foreign_value = php::Array(result).get("value");
+            if (typephp_fiber_debug()) {
+                fprintf(stderr, "[fiber %d] forward foreign suspension of generator fiber %p to %p\n", getpid(),
+                        (void *) fiber.object(), (void *) EG(active_fiber));
+            }
             if (EG(active_fiber) == nullptr) {
                 typephp_generator_fibers.erase(reinterpret_cast<zend_fiber *>(fiber.object()));
                 php::throwException(zend_ce_error, "Cannot suspend outside of a fiber");
@@ -564,7 +635,7 @@ static void typephp_fiber_generator_advance(php::Object &this_,
                 thrown = php::catchException();
                 has_thrown = true;
             }
-            typephp_generator_fibers[reinterpret_cast<zend_fiber *>(fiber.object())] = EG(active_fiber);
+            typephp_register_generator_fiber(reinterpret_cast<zend_fiber *>(fiber.object()));
             result = has_thrown
                 ? fiber.call(typephp_fiber_str_throw(), php::ArgList{thrown})
                 : fiber.call(typephp_fiber_str_resume(), php::ArgList{resumed});
@@ -767,6 +838,7 @@ void typephp_register_fiber_generator_class() {
         &ce, nullptr, ZEND_ACC_FINAL | ZEND_ACC_NO_DYNAMIC_PROPERTIES | ZEND_ACC_NOT_SERIALIZABLE);
     object_handlers = *zend_get_std_object_handlers();
     object_handlers.clone_obj = nullptr;
+    object_handlers.free_obj = typephp_fiber_generator_free_obj;
     typephp_fiber_generator_ce->default_object_handlers = &object_handlers;
     zend_class_implements(typephp_fiber_generator_ce, 1, zend_ce_iterator);
     zend_declare_property_null(typephp_fiber_generator_ce, ZEND_STRL("callback"), ZEND_ACC_PRIVATE);
