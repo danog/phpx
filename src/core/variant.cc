@@ -229,12 +229,6 @@ void Variant::unset() {
     throwErrorIfOccurred();
 }
 
-Variant::~Variant() {
-    if (!isIndirect() && Z_REFCOUNTED(val)) {
-        zval_ptr_dtor(&val);
-    }
-}
-
 bool Variant::isNumeric() const {
     auto zv = unwrap_ptr();
     switch (Z_TYPE_P(zv)) {

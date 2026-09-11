@@ -635,19 +635,17 @@ static inline void move(Variant &v, zval *retval) {
 }
 
 static inline bool instanceOf(const Variant &v, const String &cls) {
-    if (!v.isObject()) {
+    const zval *zv = v.unwrap_ptr();
+    if (Z_TYPE_P(zv) != IS_OBJECT) {
         return false;
     }
-    Object tmp(v);
-    return tmp.instanceOf(cls);
+    zend_class_entry *ce = getClassEntry(cls);
+    return ce != nullptr && instanceof_function(Z_OBJCE_P(zv), ce);
 }
 
 static inline bool instanceOf(const Variant &v, zend_class_entry *ce) {
-    if (!v.isObject()) {
-        return false;
-    }
-    Object tmp(v);
-    return tmp.instanceOf(ce);
+    const zval *zv = v.unwrap_ptr();
+    return Z_TYPE_P(zv) == IS_OBJECT && instanceof_function(Z_OBJCE_P(zv), ce);
 }
 
 static inline Object clone(const Variant &v) {

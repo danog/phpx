@@ -1221,7 +1221,11 @@ class Variant {
     Variant(zend_resource *res) {
         ZVAL_RES(ptr(), res);
     }
-    ~Variant();
+    ~Variant() {
+        if (!isIndirect() && Z_REFCOUNTED(val)) {
+            zval_ptr_dtor(&val);
+        }
+    }
     template <typename T, enable_if_integral_non_bool<T> = 0>
     Variant &operator=(T v) {
         destroy();

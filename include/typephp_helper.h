@@ -755,17 +755,33 @@ class PHPX_API FunctionCallCacheSlot final {
     }
 };
 
-/** Request-local monomorphic cache for one dynamic method-call site. */
+/**
+ * Request-local polymorphic inline cache for one dynamic method-call site.
+ * The method name of a call site is a literal, so the cache is keyed by the
+ * receiver's class: a small direct-mapped table keeps the resolution for the
+ * classes seen at the site (Psalm-style code calls the same method on dozens
+ * of subclasses from one site).
+ */
 class PHPX_API MethodCallCacheSlot final {
-    zend_class_entry *class_entry_ = nullptr;
+  public:
+    static constexpr uint32_t ENTRIES = 8;
+
+  private:
+    struct Entry {
+        zend_class_entry *class_entry = nullptr;
+        zend_function *function = nullptr;
+        zend_class_entry *called_scope = nullptr;
+        zend_class_entry *lexical_scope_guard = nullptr;
+        zend_class_entry *called_scope_guard = nullptr;
+        zend_class_entry *this_scope_guard = nullptr;
+        bool scoped = false;
+    };
+    Entry entries_[ENTRIES]{};
     zend_string *name_ = nullptr;
-    zend_function *function_ = nullptr;
-    zend_class_entry *called_scope_ = nullptr;
-    zend_class_entry *lexical_scope_guard_ = nullptr;
-    zend_class_entry *called_scope_guard_ = nullptr;
-    zend_class_entry *this_scope_guard_ = nullptr;
-    bool scoped_ = false;
-    bool polymorphic_ = false;
+
+    static uint32_t indexOf(const zend_class_entry *ce) noexcept {
+        return static_cast<uint32_t>((reinterpret_cast<uintptr_t>(ce) >> 6) % ENTRIES);
+    }
 
     Variant callImpl(const Variant &object,
                      const Variant &method,
