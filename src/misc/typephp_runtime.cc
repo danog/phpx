@@ -20,6 +20,93 @@ static void module_init(zend_module_entry *module) {
     }
 }
 
+// zend_alloc_ce_cache() refuses permanent interned strings once startup is
+// done, and the compiled module is registered after php_embed_init(). Its
+// declarations live for the whole (single-request) process, so the class-name
+// strings of its property and parameter types get a class-entry cache slot
+// here; without it every typed-property write with a class type resolves the
+// class by name (lowercase + hash lookup).
+static void typephp_alloc_ce_cache_late(zend_string *name) {
+    if (ZSTR_HAS_CE_CACHE(name) || !ZSTR_IS_INTERNED(name)) {
+        return;
+    }
+    if (zend_string_equals_ci(name, ZSTR_KNOWN(ZEND_STR_SELF))
+        || zend_string_equals_ci(name, ZSTR_KNOWN(ZEND_STR_PARENT))) {
+        return;
+    }
+    uint32_t ret;
+    do {
+        ret = ZEND_MAP_PTR_NEW_OFFSET();
+    } while (ret <= 2);
+    GC_ADD_FLAGS(name, IS_STR_CLASS_NAME_MAP_PTR);
+    GC_SET_REFCOUNT(name, ret);
+}
+
+static void typephp_alloc_type_ce_caches(const zend_type &type) {
+    const zend_type *current;
+    ZEND_TYPE_FOREACH(type, current) {
+        if (ZEND_TYPE_HAS_NAME(*current)) {
+            typephp_alloc_ce_cache_late(ZEND_TYPE_NAME(*current));
+        } else if (ZEND_TYPE_HAS_LIST(*current)) {
+            const zend_type *inner;
+            ZEND_TYPE_FOREACH(*current, inner) {
+                if (ZEND_TYPE_HAS_NAME(*inner)) {
+                    typephp_alloc_ce_cache_late(ZEND_TYPE_NAME(*inner));
+                }
+            } ZEND_TYPE_FOREACH_END();
+        }
+    } ZEND_TYPE_FOREACH_END();
+}
+
+static void typephp_alloc_function_ce_caches(const zend_function *fn) {
+    if (fn->type != ZEND_INTERNAL_FUNCTION || fn->common.arg_info == nullptr) {
+        return;
+    }
+    const zend_internal_arg_info *arg_info = fn->internal_function.arg_info;
+    uint32_t num_args = fn->common.num_args;
+    if (fn->common.fn_flags & ZEND_ACC_VARIADIC) {
+        num_args++;
+    }
+    if (fn->common.fn_flags & ZEND_ACC_HAS_RETURN_TYPE) {
+        typephp_alloc_type_ce_caches(arg_info[-1].type);
+    }
+    for (uint32_t i = 0; i < num_args; i++) {
+        typephp_alloc_type_ce_caches(arg_info[i].type);
+    }
+}
+
+static void typephp_alloc_module_ce_caches(const zend_module_entry *module) {
+    zval *entry;
+    ZEND_HASH_MAP_FOREACH_VAL(EG(class_table), entry) {
+        auto *ce = static_cast<zend_class_entry *>(Z_PTR_P(entry));
+        if (ce->type != ZEND_INTERNAL_CLASS || ce->info.internal.module != module) {
+            continue;
+        }
+        typephp_alloc_ce_cache_late(ce->name);
+        zval *prop_entry;
+        ZEND_HASH_MAP_FOREACH_VAL(&ce->properties_info, prop_entry) {
+            auto *prop_info = static_cast<zend_property_info *>(Z_PTR_P(prop_entry));
+            if (prop_info->ce == ce && ZEND_TYPE_IS_SET(prop_info->type)) {
+                typephp_alloc_type_ce_caches(prop_info->type);
+            }
+        } ZEND_HASH_FOREACH_END();
+        zval *method_entry;
+        ZEND_HASH_MAP_FOREACH_VAL(&ce->function_table, method_entry) {
+            auto *method = static_cast<zend_function *>(Z_PTR_P(method_entry));
+            if (method->common.scope == ce) {
+                typephp_alloc_function_ce_caches(method);
+            }
+        } ZEND_HASH_FOREACH_END();
+    } ZEND_HASH_FOREACH_END();
+    zval *fn_entry;
+    ZEND_HASH_MAP_FOREACH_VAL(EG(function_table), fn_entry) {
+        auto *fn = static_cast<zend_function *>(Z_PTR_P(fn_entry));
+        if (fn->type == ZEND_INTERNAL_FUNCTION && fn->internal_function.module == module) {
+            typephp_alloc_function_ce_caches(fn);
+        }
+    } ZEND_HASH_FOREACH_END();
+}
+
 static php_stream *s_in_process = nullptr;
 
 static void cli_register_file_handles() {
@@ -152,6 +239,7 @@ extern "C" int typephp_runtime_start(typephp_module_getter get_module, int argc,
         zend_interned_strings_switch_storage(1);
         EG(error_reporting) = error_reporting;
     }
+    typephp_alloc_module_ce_caches(typephp_runtime_module);
 
 #if !defined(PHP_WIN32) && !defined(__wasi__) && !defined(PHPX_IOS) && !defined(PHPX_ANDROID)
     save_ps_args(argc, argv);

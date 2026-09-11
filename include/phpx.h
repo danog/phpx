@@ -1274,8 +1274,44 @@ class Variant {
      */
     void copyRef(Variant *v);
     Variant &operator=(const zval *v);
-    Variant &operator=(const Variant &v);
-    Variant &operator=(Variant &&v);
+    Variant &operator=(const Variant &v) {
+        if (EXPECTED(&v != this)) {
+            assignFrom(v.unwrap_ptr());
+        }
+        return *this;
+    }
+    Variant &operator=(Variant &&v) {
+        // Both wrappers own ordinary zvals: transfer ownership without
+        // touching refcounts. Indirect/reference wrappers keep PHP assignment
+        // semantics (moveAssignSlow).
+        if (EXPECTED(&v != this && Z_TYPE(val) != IS_INDIRECT && Z_TYPE(val) != IS_REFERENCE
+                     && Z_TYPE(v.val) != IS_INDIRECT && Z_TYPE(v.val) != IS_REFERENCE)) {
+            zval old = val;
+            ZVAL_COPY_VALUE(&val, &v.val);
+            ZVAL_UNDEF(&v.val);
+            if (Z_REFCOUNTED(old)) {
+                zval_ptr_dtor(&old);
+            }
+            return *this;
+        }
+        return moveAssignSlow(std::move(v));
+    }
+    Variant &moveAssignSlow(Variant &&v);
+    /** PHP assignment of an unwrapped source value into this wrapper. */
+    void assignFrom(const zval *src) {
+        // An owned plain zval takes the value directly; indirect wrappers,
+        // references (typed-reference validation) and string offsets go
+        // through copyFrom().
+        if (EXPECTED(Z_TYPE(val) != IS_INDIRECT && Z_TYPE(val) != IS_REFERENCE)) {
+            zval old = val;
+            ZVAL_COPY(&val, src);
+            if (Z_REFCOUNTED(old)) {
+                zval_ptr_dtor(&old);
+            }
+            return;
+        }
+        copyFrom(src);
+    }
     Variant &operator=(Variant *v);
     void rebindReference(const Variant &reference);
     Variant &operator=(std::nullptr_t) {
@@ -1411,7 +1447,19 @@ class Variant {
         return zval_get_double(const_cast<zval *>(unwrap_ptr()));
     }
     bool toBool() const {
-        return zend_is_true(unwrap_ptr());
+        const zval *zv = unwrap_ptr();
+        switch (Z_TYPE_P(zv)) {
+        case IS_TRUE:
+            return true;
+        case IS_FALSE:
+        case IS_NULL:
+        case IS_UNDEF:
+            return false;
+        case IS_LONG:
+            return Z_LVAL_P(zv) != 0;
+        default:
+            return zend_is_true(zv);
+        }
     }
     Array toArray() const;
     Object toObject() const;
@@ -3009,7 +3057,7 @@ static inline Object toObject(const Variant &v, zend_class_entry *ce) {
                          ZSTR_VAL(v.ce()->name));
         return {};
     }
-    return Object{v.unwrap_ptr()};
+    return Object{Z_OBJ_P(v.unwrap_ptr()), Ctor::Copy};
 }
 
 extern PHPX_API Variant null;

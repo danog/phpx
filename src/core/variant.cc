@@ -89,14 +89,7 @@ Variant &Variant::operator=(const zval *v) {
     return *this;
 }
 
-Variant &Variant::operator=(const Variant &v) {
-    if (&v != this) {
-        copyFrom(v.unwrap_ptr());
-    }
-    return *this;
-}
-
-Variant &Variant::operator=(Variant &&v) {
+Variant &Variant::moveAssignSlow(Variant &&v) {
     if (&v == this) {
         return *this;
     }
